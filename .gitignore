@@ -1,0 +1,12 @@
+*
+!.gitignore
+!README.md
+!FDA_FEP_public.Rproj
+!Pmetrics/
+Pmetrics/*
+!Pmetrics/Rscript/
+!Pmetrics/Rscript/**
+!Pmetrics/Runs/
+Pmetrics/Runs/**
+!Pmetrics/Runs/**/
+!Pmetrics/Runs/**/*.html
