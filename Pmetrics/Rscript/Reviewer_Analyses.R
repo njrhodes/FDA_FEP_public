@@ -35,7 +35,7 @@ REVIEWER_HD_REFERENCE <- 7.2
 REVIEWER_HD_LOW <- REVIEWER_HD_REFERENCE * 0.50
 REVIEWER_HD_HIGH <- REVIEWER_HD_REFERENCE * 1.50
 
-REVIEWER_MODULE_VERSION <- "1.2.1"
+REVIEWER_MODULE_VERSION <- "1.2.3"
 REVIEWER_ELF_EXCLUDE_N <- 2L
 REVIEWER_ELF_PAIR_WINDOW_H <- 0.5
 
@@ -354,7 +354,6 @@ reviewer_comment_map <- function(write_html = TRUE) {
       "RRT composition and 'CRRT-specific' framing",
       "HD-only subjects and interpretation of native clearance",
       "CRRT intensity, flow range, duration, and modality switching",
-      "HD timing and activation/deactivation",
       "Simulation weight/flow assumption",
       "Limited CRRT-specific observations",
       "Two high ELF observations and influence on fit",
@@ -373,7 +372,6 @@ reviewer_comment_map <- function(write_html = TRUE) {
       "Subject and observation counts for CRRT-only, HD-only, both, and neither by development/validation cohort",
       "Reviewer run 103 excludes HD-only subjects; parameter medians are compared with the primary model",
       "Absolute flow, mL/kg/h intensity, observed active duration/span, and subjects with multiple CRRT modalities",
-      "Recorded HD sessions and active intervals from the time-varying HD indicator",
       "Reads actual simulation templates and reports absolute flow and mL/kg/h for each weight/regimen",
       "Counts observations and contributing subjects by matrix and RRT category",
       "Reviewer run 106 removes exactly the two highest development ELF observations and reports before/after ELF metrics",
@@ -391,7 +389,6 @@ reviewer_comment_map <- function(write_html = TRUE) {
     `Output` = c(
       "reviewer-data-audit.html",
       "reviewer-model-sensitivity.html",
-      "reviewer-data-audit.html",
       "reviewer-data-audit.html",
       "reviewer-data-audit.html",
       "reviewer-data-audit.html",
@@ -503,23 +500,6 @@ crrt_exposure_table <- function(dev, val) {
       `Recorded effluent intensity, mL/kg/h` = summary_numbers(intensity, 1L),
       `Observed CRRT-active duration, h` = summary_numbers(duration$active_h, 1L),
       `Observed CRRT span, h` = summary_numbers(duration$span_h, 1L),
-      check.names = FALSE,
-      stringsAsFactors = FALSE
-    )
-  }
-  rbind(build(dev, "Development"), build(val, "Validation"))
-}
-
-hd_timing_table <- function(dev, val) {
-  build <- function(data, label) {
-    duration <- observed_state_duration(data, "hd")
-    duration <- duration[duration$sessions > 0, , drop = FALSE]
-    data.frame(
-      Dataset = label,
-      `Subjects ever HD` = nrow(duration),
-      `Recorded HD sessions` = sum(duration$sessions),
-      `Observed intradialytic duration, h` = summary_numbers(duration$active_h, 1L),
-      `Observed HD span, h` = summary_numbers(duration$span_h, 1L),
       check.names = FALSE,
       stringsAsFactors = FALSE
     )
@@ -747,7 +727,6 @@ reviewer_data_audit <- function(write_html = TRUE) {
     list(title="Observed treatment/follow-up period", intro="Dataset time span and dose-record count provide a reproducible answer to whether sampling covered multiple occasions.", html=data_frame_html(observation_period_table(dev, val))),
     list(title="CRRT exposure and intensity", intro="Recorded effluent intensity is calculated as recorded absolute flow (mL/h) divided by contemporaneous weight (kg). Duration uses the stepwise CRRT indicator over observed dataset intervals.", html=data_frame_html(crrt_exposure_table(dev, val))),
     list(title="Weight representation within recorded effluent flow", intro="This quantifies the extent to which weight is already embedded in the recorded CRRT flow term.", html=data_frame_html(weight_flow_relationship_table(dev, val))),
-    list(title="Intermittent HD timing representation", intro="The model activates fixed HD clearance whenever the time-varying HD indicator equals 1. This table audits recorded sessions and active intervals.", html=data_frame_html(hd_timing_table(dev, val))),
     list(title="Dose and observation alignment with HD status", intro="Counts show which dose and biological-matrix records were assigned to intradialytic versus interdialytic periods by the time-varying HD indicator.", html=data_frame_html(hd_event_alignment_table(dev, val))),
     list(title="CRRT modality switching", intro="Counts greater than the number ever receiving CRRT can occur when a subject contributes more than one modality over follow-up.", html=data_frame_html(modality_switch_table(dev, val))),
     list(title="Observed values above the stated 100 mg/L assay range", intro="This quantifies records requiring a laboratory dilution-integrity explanation; code cannot verify the laboratory procedure itself.", html=data_frame_html(assay_range_table(dev, val))),
@@ -1094,35 +1073,99 @@ same_data_model_comparison <- function() {
 
 
 validation_structure_comparison <- function() {
-  piecewise <- load_public_run(5L)
-  single <- load_reviewer_run(102L)
-  conventional <- load_reviewer_run(108L)
-  output <- list(); counter <- 0L
+  entries <- list(
+    list(
+      run = load_public_run(5L),
+      label = "Run 5 - Primary piecewise V1 validation"
+    ),
+    list(
+      run = load_reviewer_run(102L),
+      label = "Run 102 - Single V1 validation"
+    ),
+    list(
+      run = load_reviewer_run(108L),
+      label = "Run 108 - Single V1 + fixed WT/CrCl scaling validation"
+    )
+  )
+
+  output <- list()
+  counter <- 0L
+
   for (outeq in 1:5) {
-    for (entry in list(
-      list(run=piecewise,label="Piecewise V1"),
-      list(run=single,label="Single V1"),
-      list(run=conventional,label="Single V1 + WT/CrCl scaling")
-    )) {
+    for (entry in entries) {
       counter <- counter + 1L
-      output[[counter]] <- op_metrics(entry$run, entry$label, "Validation", outeq, "post")
+
+      output[[counter]] <- op_metrics(
+        entry$run,
+        entry$label,
+        "Validation",
+        outeq,
+        "post"
+      )
     }
   }
+
   format_metrics_table(do.call(rbind, output))
 }
 
 sensitivity_parameter_table <- function() {
   runs <- list(
-    list(run=load_public_run(1L), label="Primary piecewise model"),
-    list(run=load_reviewer_run(103L), label="Exclude HD-only subjects"),
-    list(run=load_reviewer_run(104L), label=paste0("Fixed CL_HD = ", REVIEWER_HD_LOW, " L/h")),
-    list(run=load_reviewer_run(105L), label=paste0("Fixed CL_HD = ", REVIEWER_HD_HIGH, " L/h")),
-    list(run=load_reviewer_run(106L), label="Exclude two highest ELF observations")
+    list(
+      run = load_public_run(1L),
+      label = "Run 1 - Primary piecewise V1"
+    ),
+    list(
+      run = load_reviewer_run(103L),
+      label = "Run 103 - Exclude HD-only subjects"
+    ),
+    list(
+      run = load_reviewer_run(104L),
+      label = paste0(
+        "Run 104 - Piecewise V1; CL_HD = ",
+        REVIEWER_HD_LOW,
+        " L/h"
+      )
+    ),
+    list(
+      run = load_reviewer_run(105L),
+      label = paste0(
+        "Run 105 - Piecewise V1; CL_HD = ",
+        REVIEWER_HD_HIGH,
+        " L/h"
+      )
+    ),
+    list(
+      run = load_reviewer_run(106L),
+      label = "Run 106 - Exclude two highest ELF observations"
+    )
   )
-  data <- do.call(rbind, lapply(runs, function(x) extract_population_medians(x$run, x$label)))
-  wide <- reshape(data, idvar="Parameter", timevar="Run", direction="wide")
+
+  data <- do.call(
+    rbind,
+    lapply(
+      runs,
+      function(entry) {
+        extract_population_medians(
+          entry$run,
+          entry$label
+        )
+      }
+    )
+  )
+
+  wide <- reshape(
+    data,
+    idvar = "Parameter",
+    timevar = "Run",
+    direction = "wide"
+  )
+
   names(wide) <- sub("^Median\\.", "", names(wide))
-  for (name in names(wide)[-1L]) wide[[name]] <- format_number(wide[[name]], 3L)
+
+  for (name in names(wide)[-1L]) {
+    wide[[name]] <- format_number(wide[[name]], 3L)
+  }
+
   wide
 }
 
@@ -1142,12 +1185,23 @@ elf_outlier_table <- function() {
 }
 
 elf_sensitivity_metrics <- function() {
-  primary <- load_public_run(1L)
-  excluded <- load_reviewer_run(106L)
   data <- rbind(
-    op_metrics(primary, "Primary", "Development", 5L, "post"),
-    op_metrics(excluded, "Two highest ELF observations removed", "Development", 5L, "post")
+    op_metrics(
+      load_public_run(1L),
+      "Run 1 - Primary piecewise V1",
+      "Development",
+      5L,
+      "post"
+    ),
+    op_metrics(
+      load_reviewer_run(106L),
+      "Run 106 - Exclude two highest ELF observations",
+      "Development",
+      5L,
+      "post"
+    )
   )
+
   format_metrics_table(data)
 }
 

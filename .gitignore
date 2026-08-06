@@ -69,3 +69,6 @@ Pmetrics/Sim/*
 *.tar
 *.tar.gz
 *.7z
+
+# Generated reviewer-response reports
+Pmetrics/Runs/reviewer-*.html
