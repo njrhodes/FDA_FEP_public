@@ -20,13 +20,22 @@
 # not additional steps in the prespecified manuscript model-selection path.
 # =============================================================================
 
-REVIEWER_MODULE_VERSION <- "1.2.0"
-REVIEWER_FIT_CYCLES <- FIT_CYCLES
-REVIEWER_FIT_POINTS <- FIT_POINTS
-REVIEWER_SEED <- FIT_SEED
-REVIEWER_HD_LOW <- 3.6
+
+# Reviewer 2 explicitly requested sensitivity analysis of the fixed IHD
+# clearance. The reviewer did not specify alternative values.
+#
+# The primary value is 7.2 L/h. Lower and upper values are deterministic
+# analyst-selected -50% and +50% stress-test bounds:
+#   7.2 * 0.50 = 3.6 L/h
+#   7.2 * 1.50 = 10.8 L/h
+#
+# These are not empirical confidence limits, fitted estimates, or values
+# directly reported by the reviewer or supporting literature.
 REVIEWER_HD_REFERENCE <- 7.2
-REVIEWER_HD_HIGH <- 10.8
+REVIEWER_HD_LOW <- REVIEWER_HD_REFERENCE * 0.50
+REVIEWER_HD_HIGH <- REVIEWER_HD_REFERENCE * 1.50
+
+REVIEWER_MODULE_VERSION <- "1.2.1"
 REVIEWER_ELF_EXCLUDE_N <- 2L
 REVIEWER_ELF_PAIR_WINDOW_H <- 0.5
 
@@ -612,14 +621,32 @@ hd_event_alignment_table <- function(dev, val) {
 assay_range_table <- function(dev, val) {
   build <- function(data, label) {
     obs <- observation_rows(data)
-    tab <- as.data.frame(table(matrix_label(obs$outeq), obs$out > 100), stringsAsFactors = FALSE)
+
+    # Output equation 4 is cumulative effluent amount, not a concentration,
+    # and therefore cannot be compared with the 100 mg/L assay range.
+    obs <- obs[obs$outeq %in% c(1L, 2L, 3L, 5L), , drop = FALSE]
+
+    tab <- as.data.frame(
+      table(matrix_label(obs$outeq), obs$out > 100),
+      stringsAsFactors = FALSE
+    )
     names(tab) <- c("Matrix", "Above 100 mg/L", "Observations")
-    tab <- tab[tab$`Above 100 mg/L` == "TRUE" & tab$Observations > 0, , drop = FALSE]
+    tab <- tab[
+      tab$`Above 100 mg/L` == "TRUE" & tab$Observations > 0,
+      ,
+      drop = FALSE
+    ]
     tab$Dataset <- label
     tab[, c("Dataset", "Matrix", "Observations")]
   }
+
   output <- rbind(build(dev, "Development"), build(val, "Validation"))
-  if (nrow(output) == 0L) data.frame(Status = "No observed concentrations above 100 mg/L.") else output
+
+  if (nrow(output) == 0L) {
+    data.frame(Status = "No observed concentrations above 100 mg/L.")
+  } else {
+    output
+  }
 }
 
 paired_matrix_values <- function(data, target_eq, reference_eq, window_h = 0) {
@@ -677,8 +704,19 @@ simulation_assumption_table <- function() {
   templates <- load_simulation_templates()
   output <- list(); counter <- 0L
   for (code in names(templates)) {
-    data <- normalize_analysis_frame(templates[[code]])
-    rows <- unique(data[, c("id", "time", "wt", "flow", "crrt"), drop = FALSE])
+    template_path <- templates[[code]]
+
+    data <- utils::read.csv(
+      template_path,
+      check.names = FALSE,
+      stringsAsFactors = FALSE,
+      na.strings = c("", "NA", ".", "NaN")
+    )
+    data <- normalize_analysis_frame(data)
+
+    rows <- unique(
+      data[, c("id", "time", "wt", "flow", "crrt"), drop = FALSE]
+    )
     ids <- unique(rows$id)
     for (id in ids) {
       one <- rows[rows$id == id & rows$crrt == 1 & is.finite(rows$flow), , drop = FALSE]
@@ -747,39 +785,94 @@ remove_highest_elf_observations <- function(data, n = REVIEWER_ELF_EXCLUDE_N) {
   data[-head(ranked, n), , drop = FALSE]
 }
 
-reviewer_fit_development <- function(key, overwrite = FALSE) {
-  row <- reviewer_registry_row(key)
-  data <- read_local_analysis_frame("development")
-  if (key == "no_hd_only") data <- remove_hd_only_subjects(data)
-  if (key == "elf_top2_removed") data <- remove_highest_elf_observations(data)
-  model <- make_model(row$variant, hd_clearance = row$hd_clearance)
-  pm_data <- PM_data$new(data, loq = rep(0, 5))
-  message("Fitting reviewer run ", row$reviewer_run, ": ", row$role)
-  model$fit(
-    data = pm_data,
-    cycles = REVIEWER_FIT_CYCLES,
-    path = PATHS$runs,
-    run = row$reviewer_run,
-    points = REVIEWER_FIT_POINTS,
-    seed = REVIEWER_SEED,
-    overwrite = overwrite,
-    report = "plotly"
+fit_reviewer_run_101 <- function(overwrite = FALSE) {
+  data_run_101 <- read_local_analysis_frame("development")
+  pm_data_run_101 <- PM_data$new(data_run_101, loq = rep(0, 5))
+  model_run_101 <- make_single_volume_model()
+  message("Fitting reviewer run 101: single-volume development; cycles=1000, points = 300, seed=12345")
+  model_run_101$fit(
+    data = pm_data_run_101, cycles = 1000, path = PATHS$runs, run = 101,
+    points = 300, seed = 12345, overwrite = overwrite, report = "plotly"
+  )
+}
+
+fit_reviewer_run_103 <- function(overwrite = FALSE) {
+  data_run_103 <- remove_hd_only_subjects(read_local_analysis_frame("development"))
+  pm_data_run_103 <- PM_data$new(data_run_103, loq = rep(0, 5))
+  model_run_103 <- make_base_model()
+  message("Fitting reviewer run 103: exclude HD-only subjects; cycles=1000, points = 300, seed=12345")
+  model_run_103$fit(
+    data = pm_data_run_103, cycles = 1000, path = PATHS$runs, run = 103,
+    points = 300, seed = 12345, overwrite = overwrite, report = "plotly"
+  )
+}
+
+fit_reviewer_run_104 <- function(overwrite = FALSE) {
+  data_run_104 <- read_local_analysis_frame("development")
+  pm_data_run_104 <- PM_data$new(data_run_104, loq = rep(0, 5))
+  model_run_104 <- make_base_hd_low_model()
+  message("Fitting reviewer run 104: fixed CL_HD=3.6 L/h; cycles=1000, points = 300, seed=12345")
+  model_run_104$fit(
+    data = pm_data_run_104, cycles = 1000, path = PATHS$runs, run = 104,
+    points = 300, seed = 12345, overwrite = overwrite, report = "plotly"
+  )
+}
+
+fit_reviewer_run_105 <- function(overwrite = FALSE) {
+  data_run_105 <- read_local_analysis_frame("development")
+  pm_data_run_105 <- PM_data$new(data_run_105, loq = rep(0, 5))
+  model_run_105 <- make_base_hd_high_model()
+  message("Fitting reviewer run 105: fixed CL_HD=10.8 L/h; cycles=1000, points = 300, seed=12345")
+  model_run_105$fit(
+    data = pm_data_run_105, cycles = 1000, path = PATHS$runs, run = 105,
+    points = 300, seed = 12345, overwrite = overwrite, report = "plotly"
+  )
+}
+
+fit_reviewer_run_106 <- function(overwrite = FALSE) {
+  data_run_106 <- remove_highest_elf_observations(read_local_analysis_frame("development"))
+  pm_data_run_106 <- PM_data$new(data_run_106, loq = rep(0, 5))
+  model_run_106 <- make_base_model()
+  message("Fitting reviewer run 106: remove two highest ELF observations; cycles=1000, points = 300, seed=12345")
+  model_run_106$fit(
+    data = pm_data_run_106, cycles = 1000, path = PATHS$runs, run = 106,
+    points = 300, seed = 12345, overwrite = overwrite, report = "plotly"
+  )
+}
+
+fit_reviewer_run_107 <- function(overwrite = FALSE) {
+  data_run_107 <- read_local_analysis_frame("development")
+  pm_data_run_107 <- PM_data$new(data_run_107, loq = rep(0, 5))
+  model_run_107 <- make_conventional_single_volume_model()
+  message("Fitting reviewer run 107: conventional single-volume development; cycles=1000, points = 300, seed=12345")
+  model_run_107$fit(
+    data = pm_data_run_107, cycles = 1000, path = PATHS$runs, run = 107,
+    points = 300, seed = 12345, overwrite = overwrite, report = "plotly"
   )
 }
 
 reviewer_validate_single_volume <- function(overwrite = FALSE) {
-  row <- reviewer_registry_row("single_volume_validation")
   if (!reviewer_run_exists(101L)) {
-    stop("Reviewer run 101 is missing. Fit it before validation.", call. = FALSE)
+    stop(
+      "Reviewer run 101 is missing. Fit it before validation.",
+      call. = FALSE
+    )
   }
-  data <- load_analysis_data("validation")
-  model <- make_model("single_volume", hd_clearance = REVIEWER_HD_REFERENCE)
-  message("Calculating reviewer run 102 held-out MAP posteriors for the single-volume comparator.")
-  model$map(
-    data = data,
-    prior = 101L,
+
+  validation_data <- load_analysis_data("validation")
+  model <- make_single_volume_model()
+
+  message(
+    "Fitting reviewer run 102 held-out validation with cycles=0 ",
+    "using reviewer run 101 as the fixed prior."
+  )
+
+  model$fit(
+    data = validation_data,
+    cycles = 0,
     path = PATHS$runs,
-    run = row$reviewer_run,
+    run = 102L,
+    prior = 101L,
     overwrite = overwrite,
     report = "plotly"
   )
@@ -787,18 +880,27 @@ reviewer_validate_single_volume <- function(overwrite = FALSE) {
 
 
 reviewer_validate_conventional_volume <- function(overwrite = FALSE) {
-  row <- reviewer_registry_row("conventional_volume_validation")
   if (!reviewer_run_exists(107L)) {
-    stop("Reviewer run 107 is missing. Fit it before validation.", call. = FALSE)
+    stop(
+      "Reviewer run 107 is missing. Fit it before validation.",
+      call. = FALSE
+    )
   }
-  data <- load_analysis_data("validation")
-  model <- make_model("conventional_single_volume", hd_clearance = REVIEWER_HD_REFERENCE)
-  message("Calculating reviewer run 108 held-out MAP posteriors for the conventional single-volume comparator.")
-  model$map(
-    data = data,
-    prior = 107L,
+
+  validation_data <- load_analysis_data("validation")
+  model <- make_conventional_single_volume_model()
+
+  message(
+    "Fitting reviewer run 108 held-out validation with cycles=0 ",
+    "using reviewer run 107 as the fixed prior."
+  )
+
+  model$fit(
+    data = validation_data,
+    cycles = 0,
     path = PATHS$runs,
-    run = row$reviewer_run,
+    run = 108L,
+    prior = 107L,
     overwrite = overwrite,
     report = "plotly"
   )
@@ -807,16 +909,22 @@ reviewer_validate_conventional_volume <- function(overwrite = FALSE) {
 reviewer_fit <- function(keys = c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed"), overwrite = FALSE) {
   valid <- c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed")
   invalid <- setdiff(keys, valid)
-  if (length(invalid)) stop("Unknown reviewer key(s): ", paste(invalid, collapse=", "), call. = FALSE)
+  if (length(invalid)) stop("Unknown reviewer key(s): ", paste(invalid, collapse = ", "), call. = FALSE)
   for (key in keys) {
-    if (key == "single_volume") {
-      reviewer_fit_development("single_volume_development", overwrite)
-      reviewer_validate_single_volume(overwrite)
-    } else if (key == "conventional_volume") {
-      reviewer_fit_development("conventional_volume_development", overwrite)
-      reviewer_validate_conventional_volume(overwrite)
-    } else {
-      reviewer_fit_development(key, overwrite)
+    if (identical(key, "single_volume")) {
+      fit_reviewer_run_101(overwrite = overwrite)
+      reviewer_validate_single_volume(overwrite = overwrite)
+    } else if (identical(key, "conventional_volume")) {
+      fit_reviewer_run_107(overwrite = overwrite)
+      reviewer_validate_conventional_volume(overwrite = overwrite)
+    } else if (identical(key, "no_hd_only")) {
+      fit_reviewer_run_103(overwrite = overwrite)
+    } else if (identical(key, "hd_low")) {
+      fit_reviewer_run_104(overwrite = overwrite)
+    } else if (identical(key, "hd_high")) {
+      fit_reviewer_run_105(overwrite = overwrite)
+    } else if (identical(key, "elf_top2_removed")) {
+      fit_reviewer_run_106(overwrite = overwrite)
     }
   }
   invisible(TRUE)
@@ -928,50 +1036,62 @@ extract_population_medians <- function(run, label) {
 }
 
 same_data_model_comparison <- function() {
-  run1 <- load_public_run(1L)
+  run_numbers <- c(1L, 101L, 107L, 104L, 105L)
+
   runs <- list(
-    run1,
+    load_public_run(1L),
     load_reviewer_run(101L),
     load_reviewer_run(107L),
     load_reviewer_run(104L),
     load_reviewer_run(105L)
   )
-  raw <- as.data.frame(
-    do.call(Pmetrics::PM_compare, runs),
-    check.names = FALSE,
-    stringsAsFactors = FALSE
-  )
-  pick <- function(candidates) {
-    index <- find_compare_column(raw, candidates)
-    if (is.na(index)) rep(NA_real_, nrow(raw)) else raw[[index]]
-  }
-  run_number <- parse_run_number(pick(c("run", "runno", "runnumber")))
-  if (anyNA(run_number)) run_number <- c(1L, 101L, 107L, 104L, 105L)
+
   labels <- c(
     `1` = "Primary piecewise V1",
     `101` = "Single V1; no fixed WT/CrCl scaling",
     `107` = "Single V1; fixed WT/CrCl scaling",
-    `104` = paste0("Piecewise V1; CL_HD = ", REVIEWER_HD_LOW, " L/h"),
-    `105` = paste0("Piecewise V1; CL_HD = ", REVIEWER_HD_HIGH, " L/h")
+    `104` = paste0(
+      "Piecewise V1; CL_HD = ",
+      REVIEWER_HD_LOW,
+      " L/h"
+    ),
+    `105` = paste0(
+      "Piecewise V1; CL_HD = ",
+      REVIEWER_HD_HIGH,
+      " L/h"
+    )
   )
+
+  metrics <- do.call(
+    rbind,
+    Map(
+      extract_final_cycle_metrics,
+      runs,
+      run_numbers
+    )
+  )
+
   output <- data.frame(
-    Run = run_number,
-    Model = unname(labels[as.character(run_number)]),
-    Parameters = suppressWarnings(as.integer(pick(c("nvar", "nparameters", "parameters")))),
-    `-2LL` = suppressWarnings(as.numeric(pick(c("2ll", "ll2", "minus2ll", "ll")))),
-    AIC = suppressWarnings(as.numeric(pick(c("aic")))),
-    BIC = suppressWarnings(as.numeric(pick(c("bic")))),
-    `Population bias` = suppressWarnings(as.numeric(pick(c("popbias")))),
-    `Population imprecision` = suppressWarnings(as.numeric(pick(c("popimp")))),
-    `Posterior bias` = suppressWarnings(as.numeric(pick(c("postbias")))),
-    `Posterior imprecision` = suppressWarnings(as.numeric(pick(c("postimp")))),
+    Run = metrics$public_run,
+    Model = unname(labels[as.character(metrics$public_run)]),
+    Parameters = metrics$actual_parameters,
+    `Final cycle` = metrics$actual_cycles,
+    `-2LL` = metrics$actual_minus2ll,
+    AIC = metrics$actual_aic,
+    BIC = metrics$actual_bic,
     check.names = FALSE,
     stringsAsFactors = FALSE
   )
-  numeric_columns <- setdiff(names(output), c("Run", "Model", "Parameters"))
-  for (column in numeric_columns) output[[column]] <- format_number(output[[column]], 3L)
+
+  numeric_columns <- c("-2LL", "AIC", "BIC")
+
+  for (column in numeric_columns) {
+    output[[column]] <- format_number(output[[column]], 3L)
+  }
+
   output
 }
+
 
 validation_structure_comparison <- function() {
   piecewise <- load_public_run(5L)

@@ -118,18 +118,28 @@ Historical run numbers are provenance only. The public workflow creates and cons
 
 Reviewer-response analyses are isolated from this primary path and use run numbers beginning at 101.
 
-## Pmetrics 3.2.1 model requirements
+## Runtime requirements
 
-The canonical script enforces Pmetrics 3.2.1. All five assay/model-error declarations explicitly map to `outeq = 1` through `outeq = 5`; no output relies on list position or an implicit default.
+The canonical workflow is temporarily pinned to **R 4.4.2** and **Pmetrics 3.0.9** while the reproducible ODE-solver regression in the newer Pmetrics stack is investigated upstream. The script enforces both versions before loading Pmetrics.
+
+For Pmetrics 3.0.9 compatibility, model definitions use the package default solver and the five assay/model-error declarations map to outputs by list order. Do not add a `solver` argument or `outeq = #` to the error declarations in this rollback workflow.
+
+Each public and reviewer fit is intentionally written as an explicit run-specific call with literal `cycles = 1000`, `points = 300`, and `seed = 12345` settings. Do not replace these calls with a shared fit wrapper or shared fit-control constants.
 
 The `check` command compiles every primary and reviewer model definition before any fit is attempted.
 
 ## Commands
 
-Use the R installation under which Pmetrics 3.2.1 and its compiled dependencies were installed. From Git Bash, the executable may be set explicitly:
+Use the R 4.4.2 installation under which Pmetrics 3.0.9 and its compiled dependencies were installed. From Git Bash, set the executable explicitly:
 
 ```bash
-RSCRIPT="/c/Program Files/R/R-4.6.1/bin/x64/Rscript.exe"
+RSCRIPT="/c/Program Files/R/R-4.4.2/bin/x64/Rscript.exe"
+```
+
+Confirm the runtime before running the analysis:
+
+```bash
+"$RSCRIPT" --vanilla -e 'cat(R.version.string, "\n"); cat("Pmetrics ", as.character(packageVersion("Pmetrics")), "\n", sep = "")'
 ```
 
 Validate data, simulation templates, model definitions, the run registry, and the Git allowlist:
@@ -151,6 +161,14 @@ Run the complete manuscript path:
 
 ```bash
 "$RSCRIPT" --vanilla Pmetrics/Rscript/Analysis.R all
+```
+
+Checkpoint the rollback environment before fitting:
+
+```bash
+"$RSCRIPT" --vanilla Pmetrics/Rscript/Analysis.R version
+"$RSCRIPT" --vanilla Pmetrics/Rscript/Analysis.R check
+git diff --check
 ```
 
 Alternative model-ready data paths remain available for controlled local use:
