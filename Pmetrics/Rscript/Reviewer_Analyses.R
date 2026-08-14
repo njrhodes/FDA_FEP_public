@@ -16,8 +16,9 @@
 #   - empirical post-filter/pre-filter and ELF/plasma paired summaries, and
 #   - explicit simulation flow assumptions.
 #
-# No subject identifiers are written to tracked HTML. Derived data remain in
-# memory or temporary files. These analyses are sensitivity/response analyses,
+# Generated reviewer reports remain local and are ignored by Git; no subject
+# identifiers are written to those reports. Derived data remain in memory or
+# temporary files. These analyses are sensitivity/response analyses,
 # not additional steps in the prespecified manuscript model-selection path.
 # =============================================================================
 

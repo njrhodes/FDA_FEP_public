@@ -1596,8 +1596,7 @@ allowed_tracked_file <- function(path) {
   path <- gsub("\\\\", "/", path)
   path %in% c(".gitignore", "README.md", "FDA_FEP_public.Rproj") |
     grepl("^Pmetrics/Rscript/[^/]+\\.R$", path) |
-    grepl("^Pmetrics/Sim/sim[567]\\.csv$", path) |
-    grepl("^Pmetrics/Runs/(.*/)?[^/]+\\.html$", path)
+    grepl("^Pmetrics/Sim/sim[567]\\.csv$", path)
 }
 
 audit_git_tracking <- function() {
