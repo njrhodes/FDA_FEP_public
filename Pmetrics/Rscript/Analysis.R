@@ -12,7 +12,7 @@
 #   4. plasma/ELF Monte Carlo PTA simulations.
 #
 # Private data assembly, cohort construction, patient-specific corrections,
-# exploratory models, and historical run numbering are intentionally excluded.
+# exploratory models, and source run numbering are intentionally excluded.
 # The private preprocessing script writes only the model-ready development and
 # validation datasets. Non-patient simulation templates are public and versioned
 # under Pmetrics/Sim.
@@ -72,7 +72,7 @@ PATHS <- list(
 
 dir.create(PATHS$runs, recursive = TRUE, showWarnings = FALSE)
 # ---- manuscript-facing run registry -----------------------------------------
-# Public runs are deliberately numbered in manuscript order. Historical run
+# Public runs are deliberately numbered in manuscript order. Source run
 # numbers are retained only as provenance and are never used as output folders.
 RUN_REGISTRY <- data.frame(
   public_run = c(1L, 2L, 3L, 4L, 5L),
@@ -111,7 +111,7 @@ RUN_REGISTRY <- data.frame(
     "Table S3 step 4; linear CrCl scaling on native clearance",
     "Held-out MAP validation using public run 1 as prior"
   ),
-  legacy_run = c(38L, 48L, 46L, 36L, 39L),
+  source_run = c(38L, 48L, 46L, 36L, 39L),
   expected_parameters = c(10L, 10L, 10L, 10L, 10L),
   expected_minus2ll = c(1706.804, 1710.474, 1712.845, 1734.984, NA_real_),
   expected_aic = c(1726.804, 1730.474, 1732.845, 1754.984, NA_real_),
@@ -284,12 +284,6 @@ parse_run_number <- function(x) {
   suppressWarnings(as.integer(value))
 }
 
-registry_row <- function(key) {
-  row <- RUN_REGISTRY[RUN_REGISTRY$key == key, , drop = FALSE]
-  if (nrow(row) != 1L) stop("Unknown run key: ", key, call. = FALSE)
-  row
-}
-
 run_result_file <- function(run_number) {
   file.path(PATHS$runs, as.character(as.integer(run_number)), "outputs", "PMout.Rdata")
 }
@@ -308,6 +302,18 @@ load_public_run <- function(run_number) {
   }
   Pmetrics::PM_load(run_number, path = PATHS$runs)
 }
+
+load_manuscript_run <- function(key) {
+  row <- RUN_REGISTRY[RUN_REGISTRY$key == key, , drop = FALSE]
+  if (nrow(row) != 1L) stop("Unknown manuscript run key: ", key, call. = FALSE)
+  run_number <- row$source_run[[1L]]
+  if (!run_exists(run_number)) {
+    stop("Manuscript source run ", run_number, " (", key, ") is missing at ",
+         run_result_file(run_number), ".", call. = FALSE)
+  }
+  Pmetrics::PM_load(run_number, path = PATHS$runs)
+}
+
 
 format_number <- function(x, digits = 3L) {
   ifelse(is.na(x), "", formatC(as.numeric(x), digits = digits, format = "f", big.mark = ","))
@@ -956,64 +962,6 @@ extract_final_cycle_metrics <- function(run, run_number) {
   )
 }
 
-normalize_comparison <- function(comparison) {
-  raw <- as.data.frame(comparison, check.names = FALSE, stringsAsFactors = FALSE)
-  if (nrow(raw) != 4L) {
-    stop("Expected four development rows from PM_compare; received ", nrow(raw), ".", call. = FALSE)
-  }
-
-  run_index <- find_compare_column(raw, c("run", "runno", "runnumber"))
-  nvar_index <- find_compare_column(raw, c("nvar", "nparameters", "parameters"))
-  ll_index <- find_compare_column(raw, c("2ll", "ll2", "minus2ll"))
-  aic_index <- find_compare_column(raw, c("aic"))
-
-  if (is.na(ll_index) || is.na(aic_index)) {
-    stop(
-      "Could not identify -2LL/AIC columns in PM_compare output. Columns were: ",
-      paste(names(raw), collapse = ", "),
-      call. = FALSE
-    )
-  }
-
-  run_values <- if (is.na(run_index)) rownames(raw) else raw[[run_index]]
-  run_number <- parse_run_number(run_values)
-  if (anyNA(run_number)) {
-    # PM_compare may return rows in argument order without explicit run names.
-    run_number <- RUN_REGISTRY$public_run[RUN_REGISTRY$dataset == "development"]
-  }
-
-  n_parameters <- if (is.na(nvar_index)) NA_integer_ else suppressWarnings(as.integer(raw[[nvar_index]]))
-  actual <- data.frame(
-    public_run = run_number,
-    actual_parameters = n_parameters,
-    actual_minus2ll = suppressWarnings(as.numeric(raw[[ll_index]])),
-    actual_aic = suppressWarnings(as.numeric(raw[[aic_index]])),
-    stringsAsFactors = FALSE
-  )
-
-  registry <- RUN_REGISTRY[RUN_REGISTRY$dataset == "development", , drop = FALSE]
-  output <- merge(registry, actual, by = "public_run", all.x = TRUE, sort = FALSE)
-  output <- output[match(registry$public_run, output$public_run), , drop = FALSE]
-  output$delta_aic <- output$actual_aic - min(output$actual_aic, na.rm = TRUE)
-  output$delta_minus2ll <- output$actual_minus2ll - min(output$actual_minus2ll, na.rm = TRUE)
-  output$minus2ll_difference <- output$actual_minus2ll - output$expected_minus2ll
-  output$aic_difference <- output$actual_aic - output$expected_aic
-  output$manuscript_match <- ifelse(
-    abs(output$minus2ll_difference) <= 0.10 & abs(output$aic_difference) <= 0.10,
-    "within 0.10",
-    "review"
-  )
-  observed_n <- output$actual_parameters[!is.na(output$actual_parameters)]
-  if (length(observed_n) > 0L && any(observed_n != 10L)) {
-    stop(
-      "Focused candidates must each estimate 10 parameters; PM_compare reported: ",
-      paste(observed_n, collapse = ", "),
-      call. = FALSE
-    )
-  }
-  output
-}
-
 compare_development <- function(write_html = TRUE) {
   registry <- RUN_REGISTRY[
     RUN_REGISTRY$dataset == "development",
@@ -1021,8 +969,8 @@ compare_development <- function(write_html = TRUE) {
     drop = FALSE
   ]
 
-  run_numbers <- registry$public_run
-  runs <- lapply(run_numbers, load_public_run)
+  run_numbers <- registry$source_run
+  runs <- lapply(run_numbers, function(run_number) Pmetrics::PM_load(run_number, path = PATHS$runs))
 
   actual <- do.call(
     rbind,
@@ -1033,16 +981,18 @@ compare_development <- function(write_html = TRUE) {
     )
   )
 
+  names(actual)[names(actual) == "public_run"] <- "source_run"
+
   result <- merge(
     registry,
     actual,
-    by = "public_run",
+    by = "source_run",
     all.x = TRUE,
     sort = FALSE
   )
 
   result <- result[
-    match(registry$public_run, result$public_run),
+    match(registry$source_run, result$source_run),
     ,
     drop = FALSE
   ]
@@ -1138,7 +1088,7 @@ compare_development <- function(write_html = TRUE) {
     display <- data.frame(
       Step = seq_len(nrow(result)),
       `Public run` = result$public_run,
-      `Legacy run` = result$legacy_run,
+      `Legacy run` = result$source_run,
       Structure = result$structure,
       `No. parameters` = result$actual_parameters,
       `Final cycle` = result$actual_cycles,
@@ -1237,12 +1187,6 @@ weighted_quantile <- function(x, weight, probability) {
   x[which(cumulative >= probability)[1L]]
 }
 
-one_row_numeric <- function(x) {
-  data <- as.data.frame(x, check.names = FALSE)
-  names(data) <- tolower(names(data))
-  as.numeric(data[1L, , drop = TRUE])
-}
-
 find_probability_column <- function(data) {
   keys <- gsub("[^a-z0-9]", "", tolower(names(data)))
   candidates <- c("prob", "probability", "p", "pi", "weight", "wt")
@@ -1259,7 +1203,7 @@ find_probability_column <- function(data) {
 }
 
 parameter_summary <- function(write_html = TRUE) {
-  run <- load_public_run(FINAL_DEVELOPMENT_RUN)
+  run <- load_manuscript_run(FINAL_DEVELOPMENT_KEY)
 
   points <- as.data.frame(
     run$final$popPoints,
@@ -1457,14 +1401,6 @@ parameter_summary <- function(write_html = TRUE) {
 # ---- simulation inputs -------------------------------------------------------
 # sim5/sim6/sim7 are the validated public regimen templates from Adrian's
 # analysis. They are read directly from Pmetrics/Sim and are not regenerated.
-canonical_regimen <- function(x) {
-  value <- toupper(trimws(as.character(x)))
-  value[value %in% c("CONTINUOUS", "CONTINUOUS_INFUSION", "CI")] <- "CI"
-  value[value %in% c("EXTENDED", "EXTENDED_INFUSION", "EI")] <- "EI"
-  value[value %in% c("INTERMITTENT", "INTERMITTENT_INFUSION", "II")] <- "II"
-  value
-}
-
 load_simulation_templates <- function() {
   inputs <- get_analysis_inputs()
   paths <- inputs$simulation
@@ -1550,7 +1486,7 @@ pta_rows <- function(pta, regimen, matrix_name, threshold) {
 }
 
 simulate_pta <- function(write_html = TRUE) {
-  run <- load_public_run(FINAL_DEVELOPMENT_RUN)
+  run <- load_manuscript_run(FINAL_DEVELOPMENT_KEY)
   model <- make_model("base")
   templates <- load_simulation_templates()
   regimen_names <- c(
@@ -1643,7 +1579,7 @@ simulate_pta <- function(write_html = TRUE) {
     write_html_table(
       display,
       title = "Plasma and ELF probability of target attainment",
-      subtitle = "Final public model; 1,000 semiparametric profiles per regimen and weight template.",
+      subtitle = "Final manuscript source model; 1,000 semiparametric profiles per regimen and weight template.",
       notes = c(
         "Predictions span 23.9-48 hours at 0.1-hour intervals.",
         "Free cefepime fraction is fixed at 0.8. Targets are 50%, 68%, and 100% fT>MIC.",
@@ -1733,7 +1669,7 @@ run_check <- function(
     message("Simulation EI: ", inputs$simulation[["EI"]])
     message("Simulation II: ", inputs$simulation[["II"]])
   }
-  message("Run registry: public runs 1-4 development; public run 5 validation")
+  message("Manuscript source runs: 38, 48, 46, 36 development; 39 validation. Reproducibility reruns: public 1-5.")
   message("Check passed.")
   invisible(TRUE)
 }

@@ -11,6 +11,7 @@
 #   - exclusion of HD-only subjects,
 #   - fixed intermittent-HD clearance sensitivity,
 #   - exclusion of the two highest ELF observations,
+#   - right-censoring of OUTEQ 1-3 concentrations above the assay ULOQ,
 #   - population/posterior goodness-of-fit and weighted residual diagnostics,
 #   - empirical post-filter/pre-filter and ELF/plasma paired summaries, and
 #   - explicit simulation flow assumptions.
@@ -35,9 +36,10 @@ REVIEWER_HD_REFERENCE <- 7.2
 REVIEWER_HD_LOW <- REVIEWER_HD_REFERENCE * 0.50
 REVIEWER_HD_HIGH <- REVIEWER_HD_REFERENCE * 1.50
 
-REVIEWER_MODULE_VERSION <- "1.2.3"
+REVIEWER_MODULE_VERSION <- "1.3.0"
 REVIEWER_ELF_EXCLUDE_N <- 2L
 REVIEWER_ELF_PAIR_WINDOW_H <- 0.5
+REVIEWER_ASSAY_ULOQ <- 100
 
 REVIEWER_PATHS <- list(
   audit_html = file.path(PATHS$runs, "reviewer-data-audit.html"),
@@ -48,34 +50,25 @@ REVIEWER_PATHS <- list(
 )
 
 REVIEWER_RUN_REGISTRY <- data.frame(
-  reviewer_run = c(101L, 102L, 103L, 104L, 105L, 106L, 107L, 108L),
+  reviewer_run = c(101L, 102L, 103L, 104L, 105L, 106L, 107L, 108L, 109L, 110L),
   key = c(
-    "single_volume_development",
-    "single_volume_validation",
-    "no_hd_only",
-    "hd_low",
-    "hd_high",
-    "elf_top2_removed",
-    "conventional_volume_development",
-    "conventional_volume_validation"
+    "single_volume_development", "single_volume_validation", "no_hd_only",
+    "hd_low", "hd_high", "elf_top2_removed",
+    "conventional_volume_development", "conventional_volume_validation",
+    "uloq_censored_development", "uloq_censored_validation"
   ),
   variant = c(
     "single_volume", "single_volume", "base", "base", "base", "base",
-    "conventional_single_volume", "conventional_single_volume"
+    "conventional_single_volume", "conventional_single_volume", "base", "base"
   ),
   dataset = c(
     "development", "validation", "development", "development", "development", "development",
-    "development", "validation"
+    "development", "validation", "development", "validation"
   ),
   hd_clearance = c(
-    REVIEWER_HD_REFERENCE,
-    REVIEWER_HD_REFERENCE,
-    REVIEWER_HD_REFERENCE,
-    REVIEWER_HD_LOW,
-    REVIEWER_HD_HIGH,
-    REVIEWER_HD_REFERENCE,
-    REVIEWER_HD_REFERENCE,
-    REVIEWER_HD_REFERENCE
+    REVIEWER_HD_REFERENCE, REVIEWER_HD_REFERENCE, REVIEWER_HD_REFERENCE,
+    REVIEWER_HD_LOW, REVIEWER_HD_HIGH, REVIEWER_HD_REFERENCE,
+    REVIEWER_HD_REFERENCE, REVIEWER_HD_REFERENCE, REVIEWER_HD_REFERENCE, REVIEWER_HD_REFERENCE
   ),
   role = c(
     "Single central volume with the same peripheral, ELF, CRRT, HD, and output structure",
@@ -85,7 +78,9 @@ REVIEWER_RUN_REGISTRY <- data.frame(
     "Final piecewise model with fixed HD clearance increased by 50%",
     "Final piecewise model after excluding the two highest development ELF observations",
     "Single central volume with fixed WT/70 volume and CrCl/120 native-clearance scaling",
-    "Held-out MAP validation of the conventional single-volume covariate comparator"
+    "Held-out MAP validation of the conventional single-volume covariate comparator",
+    "Final piecewise model with OUTEQ 1-3 values above 100 mg/L right-censored at the assay ULOQ",
+    "Held-out MAP validation of the ULOQ-censored development prior using the same censoring rule"
   ),
   stringsAsFactors = FALSE
 )
@@ -381,7 +376,7 @@ reviewer_comment_map <- function(write_html = TRUE) {
       "Generated when optional de-identified source_cohort is retained in local input files",
       "Exact-time post-filter/pre-filter paired ratios and regression",
       "Nearest-time ELF/pre-filter pairs within the prespecified 0.5 h window; explicitly descriptive",
-      "Counts records above 100 mg/L by matrix and analysis cohort",
+      "Reviewer runs 109/110 right-censor OUTEQ 1-3 values above 100 mg/L at the assay ULOQ and refit/validate the final model",
       "Not hard-coded: requires a prespecified agency, standard/version, organism context, and breakpoint before figure annotation",
       "Not answerable from model code; requires source laboratory, collection, and quality records",
       "Manuscript/literature response rather than a model-analysis task"
@@ -452,20 +447,142 @@ modality_observation_table <- function(dev, val) {
 }
 
 baseline_table <- function(dev, val) {
-  variables <- c("age", "ht", "wt", "scr", "crcl", "bsa")
-  labels <- c(age="Age (years)", ht="Height (cm)", wt="Weight (kg)", scr="SCr (mg/dL)", crcl="CrCl (mL/min)", bsa="BSA (m2)")
-  dev_base <- first_subject_rows(dev); val_base <- first_subject_rows(val)
-  output <- lapply(variables, function(variable) {
-    data.frame(
-      Characteristic = labels[[variable]],
-      Development = if (variable %in% names(dev_base)) summary_numbers(dev_base[[variable]]) else "Not available",
-      Validation = if (variable %in% names(val_base)) summary_numbers(val_base[[variable]]) else "Not available",
-      stringsAsFactors = FALSE
-    )
-  })
-  do.call(rbind, output)
-}
 
+  dev <- normalize_analysis_frame(dev)
+  val <- normalize_analysis_frame(val)
+
+  subject_table <- function(data) {
+    ids <- unique(data$id)
+
+    out <- lapply(ids, function(subject_id) {
+      x <- data[data$id == subject_id, , drop = FALSE]
+      x <- x[order(x$time), , drop = FALSE]
+      first <- x[1L, , drop = FALSE]
+
+      crrt_rows <- x[
+        x$crrt == 1 & is.finite(x$flow),
+        ,
+        drop = FALSE
+      ]
+
+      initial_flow <- if (nrow(crrt_rows)) {
+        crrt_rows$flow[[1L]] / 1000
+      } else {
+        NA_real_
+      }
+
+      data.frame(
+        id = subject_id,
+        age = first$age[[1L]],
+        ht = first$ht[[1L]],
+        wt = first$wt[[1L]],
+        scr = first$scr[[1L]],
+        bsa = first$bsa[[1L]],
+        crcl = first$crcl[[1L]],
+        initial_crrt_flow = initial_flow,
+        ecmo = any(x$ecmo == 1, na.rm = TRUE),
+        ever_hd = any(x$hd == 1, na.rm = TRUE),
+        ever_crrt = any(x$crrt == 1, na.rm = TRUE),
+        cvvh = any(x$cvvh == 1, na.rm = TRUE),
+        cvvhd = any(x$cvvhd == 1, na.rm = TRUE),
+        cvvhdf = any(x$cvvhdf == 1, na.rm = TRUE),
+        male = first$male[[1L]],
+        stringsAsFactors = FALSE
+      )
+    })
+
+    do.call(rbind, out)
+  }
+
+  dev_s <- subject_table(dev)
+  val_s <- subject_table(val)
+  all_s <- rbind(dev_s, val_s)
+
+  med_iqr <- function(x, digits = 1L) {
+    x <- as_number(x)
+    x <- x[is.finite(x)]
+
+    if (!length(x)) return("Not available")
+
+    q <- stats::quantile(
+      x,
+      probs = c(0.25, 0.50, 0.75),
+      na.rm = TRUE,
+      names = FALSE
+    )
+
+    sprintf(
+      paste0(
+        "%.", digits, "f (%.", digits, "f - %.", digits, "f)"
+      ),
+      q[[2L]], q[[1L]], q[[3L]]
+    )
+  }
+
+  n_pct <- function(flag, denom) {
+    flag <- as.logical(flag)
+    n <- sum(flag, na.rm = TRUE)
+    sprintf("%d (%.1f%%)", n, 100 * n / denom)
+  }
+
+  make_column <- function(x) {
+    n <- nrow(x)
+
+    c(
+      med_iqr(x$age, 1L),
+      med_iqr(x$ht, 1L),
+      med_iqr(x$wt, 1L),
+      med_iqr(x$scr, 1L),
+      med_iqr(x$bsa, 1L),
+      med_iqr(x$crcl, 1L),
+      med_iqr(x$initial_crrt_flow, 1L),
+      n_pct(x$ecmo, n),
+      n_pct(x$ever_hd, n),
+      n_pct(x$ever_crrt, n),
+      n_pct(x$cvvh, n),
+      n_pct(x$cvvhd, n),
+      n_pct(x$cvvhdf, n),
+      "",
+      n_pct(x$male == 1, n),
+      n_pct(x$male == 0, n)
+    )
+  }
+
+  data.frame(
+    Characteristic = c(
+      "Age (years)",
+      "Height (cm)",
+      "Weight (kg)",
+      "SCr (mg/dL)",
+      "BSA (m2)",
+      "CrCl (mL/min)",
+      "Flow (L/h) at initial CRRT",
+      "ECMO, n (%)",
+      "Ever received HD, n (%)",
+      "Ever received CRRT, n (%)",
+      "CVVH, n (%)",
+      "CVVHD, n (%)",
+      "CVVHDF, n (%)",
+      "Sex, n (%)",
+      "Male",
+      "Female"
+    ),
+    setNames(
+      list(make_column(all_s)),
+      paste0("Overall (N = ", nrow(all_s), ")")
+    ),
+    setNames(
+      list(make_column(dev_s)),
+      paste0("Development (N = ", nrow(dev_s), ")")
+    ),
+    setNames(
+      list(make_column(val_s)),
+      paste0("Validation (N = ", nrow(val_s), ")")
+    ),
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+}
 source_cohort_table <- function(dev, val) {
   build <- function(data, dataset) {
     source_column <- find_source_cohort_column(data)
@@ -483,6 +600,169 @@ source_cohort_table <- function(dev, val) {
       stringsAsFactors = FALSE
     )
   } else output
+}
+
+
+sampling_group <- function(id) {
+  rich_ids <- c(2058, 2060, 2076, 2103, 2126, 9, 15, 20)
+
+  ifelse(
+    id %in% rich_ids,
+    "Prospective (Richly Sampled)",
+    "Sparse / Opportunistic"
+  )
+}
+
+
+observation_period_by_sampling_table <- function(dev, val) {
+  build <- function(data, dataset_label) {
+    data <- normalize_analysis_frame(data)
+    by_id <- split(data, data$id)
+
+    subject_level <- do.call(
+      rbind,
+      lapply(by_id, function(rows) {
+        times <- rows$time[is.finite(rows$time)]
+
+        span <- if (length(times) >= 2L) {
+          diff(range(times))
+        } else {
+          0
+        }
+
+        doses <- sum(
+          rows$evid == 1 |
+            (is.finite(rows$dose) & rows$dose > 0),
+          na.rm = TRUE
+        )
+
+        obs <- observation_rows(rows)
+
+        data.frame(
+          id = rows$id[[1L]],
+          `Sampling group` = sampling_group(rows$id[[1L]]),
+          `Observed follow-up, h` = span,
+          `Dose records` = doses,
+          `PK observations` = nrow(obs),
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      })
+    )
+
+    groups <- split(
+      subject_level,
+      subject_level[["Sampling group"]]
+    )
+
+    do.call(
+      rbind,
+      lapply(names(groups), function(group_name) {
+        x <- groups[[group_name]]
+
+        data.frame(
+          Dataset = dataset_label,
+          `Sampling group` = group_name,
+          Subjects = nrow(x),
+          `Observed follow-up, h` =
+            summary_numbers(x[["Observed follow-up, h"]], 1L),
+          `Dose records per subject` =
+            summary_numbers(x[["Dose records"]], 0L),
+          `PK observations per subject` =
+            summary_numbers(x[["PK observations"]], 0L),
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      })
+    )
+  }
+
+  rbind(
+    build(dev, "Development"),
+    build(val, "Validation")
+  )
+}
+
+
+crrt_exposure_by_sampling_table <- function(dev, val) {
+  build <- function(data, dataset_label) {
+    data <- normalize_analysis_frame(data)
+
+    duration <- observed_state_duration(data, "crrt")
+    duration <- duration[
+      duration$sessions > 0,
+      ,
+      drop = FALSE
+    ]
+    duration[["Sampling group"]] <- sampling_group(duration$id)
+
+    unique_state <- unique(
+      data[
+        ,
+        intersect(
+          c("id", "time", "crrt", "flow", "wt"),
+          names(data)
+        ),
+        drop = FALSE
+      ]
+    )
+
+    active <- unique_state[
+      unique_state$crrt == 1 &
+        is.finite(unique_state$flow) &
+        is.finite(unique_state$wt),
+      ,
+      drop = FALSE
+    ]
+
+    active[["Sampling group"]] <- sampling_group(active$id)
+    active$intensity <- active$flow / active$wt
+
+    groups <- unique(c(
+      as.character(duration[["Sampling group"]]),
+      as.character(active[["Sampling group"]])
+    ))
+
+    groups <- groups[!is.na(groups)]
+
+    do.call(
+      rbind,
+      lapply(groups, function(group_name) {
+        d <- duration[
+          duration[["Sampling group"]] == group_name,
+          ,
+          drop = FALSE
+        ]
+
+        a <- active[
+          active[["Sampling group"]] == group_name,
+          ,
+          drop = FALSE
+        ]
+
+        data.frame(
+          Dataset = dataset_label,
+          `Sampling group` = group_name,
+          `Subjects ever CRRT` = length(unique(d$id)),
+          `Absolute effluent flow, mL/h` =
+            summary_numbers(a$flow, 1L),
+          `Recorded effluent intensity, mL/kg/h` =
+            summary_numbers(a$intensity, 1L),
+          `Observed CRRT-active duration, h` =
+            summary_numbers(d$active_h, 1L),
+          `Observed CRRT span, h` =
+            summary_numbers(d$span_h, 1L),
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      })
+    )
+  }
+
+  rbind(
+    build(dev, "Development"),
+    build(val, "Validation")
+  )
 }
 
 crrt_exposure_table <- function(dev, val) {
@@ -604,7 +884,7 @@ assay_range_table <- function(dev, val) {
 
     # Output equation 4 is cumulative effluent amount, not a concentration,
     # and therefore cannot be compared with the 100 mg/L assay range.
-    obs <- obs[obs$outeq %in% c(1L, 2L, 3L, 5L), , drop = FALSE]
+    obs <- obs[obs$outeq %in% 1:3, , drop = FALSE]
 
     tab <- as.data.frame(
       table(matrix_label(obs$outeq), obs$out > 100),
@@ -722,10 +1002,10 @@ reviewer_data_audit <- function(write_html = TRUE) {
     list(title="RRT composition by analysis cohort", intro="Subjects are classified from time-varying CRRT and HD indicators across their complete local record.", html=data_frame_html(modality_subject_table(dev, val))),
     list(title="Observations by subject-level RRT category", intro="This separates CRRT-only, HD-only, and crossover subjects and shows which matrices they contributed.", html=data_frame_html(modality_observation_table(dev, val))),
     list(title="Sample distribution by matrix", intro="Counts of observations and contributing subjects in development and validation.", html=data_frame_html(sample_distribution_table(dev, val))),
-    list(title="Baseline characteristics by development and validation cohort", intro="One baseline row per subject, using the earliest available record.", html=data_frame_html(baseline_table(dev, val))),
+    list(title="Table 1. Baseline Characteristics and Clinical Characteristics", intro="Continuous variables are presented as median (interquartile range), and categorical variables as n (%).", html=data_frame_html(baseline_table(dev, val))),
     list(title="Original sampling cohort", intro="Generated only when an optional de-identified source-cohort field is retained locally.", html=data_frame_html(source_cohort_table(dev, val))),
-    list(title="Observed treatment/follow-up period", intro="Dataset time span and dose-record count provide a reproducible answer to whether sampling covered multiple occasions.", html=data_frame_html(observation_period_table(dev, val))),
-    list(title="CRRT exposure and intensity", intro="Recorded effluent intensity is calculated as recorded absolute flow (mL/h) divided by contemporaneous weight (kg). Duration uses the stepwise CRRT indicator over observed dataset intervals.", html=data_frame_html(crrt_exposure_table(dev, val))),
+    list(title="Observed treatment/follow-up period by sampling group", intro="Follow-up, dose records, and PK observations are summarized separately for prospective richly sampled and sparse/opportunistically sampled subjects.", html=data_frame_html(observation_period_by_sampling_table(dev, val))),
+    list(title="CRRT exposure and intensity by sampling group", intro="CRRT exposure is summarized separately for prospective richly sampled and sparse/opportunistically sampled subjects. Recorded effluent intensity is absolute flow divided by contemporaneous weight.", html=data_frame_html(crrt_exposure_by_sampling_table(dev, val))),
     list(title="Weight representation within recorded effluent flow", intro="This quantifies the extent to which weight is already embedded in the recorded CRRT flow term.", html=data_frame_html(weight_flow_relationship_table(dev, val))),
     list(title="Dose and observation alignment with HD status", intro="Counts show which dose and biological-matrix records were assigned to intradialytic versus interdialytic periods by the time-varying HD indicator.", html=data_frame_html(hd_event_alignment_table(dev, val))),
     list(title="CRRT modality switching", intro="Counts greater than the number ever receiving CRRT can occur when a subject contributes more than one modality over follow-up.", html=data_frame_html(modality_switch_table(dev, val))),
@@ -762,6 +1042,23 @@ remove_highest_elf_observations <- function(data, n = REVIEWER_ELF_EXCLUDE_N) {
   if (length(candidates) < n) stop("Fewer than ", n, " finite ELF observations are available.", call. = FALSE)
   ranked <- candidates[order(normalized$out[candidates], decreasing = TRUE)]
   data[-head(ranked, n), , drop = FALSE]
+}
+
+censor_above_assay_uloq <- function(data, uloq = REVIEWER_ASSAY_ULOQ) {
+  normalized <- normalize_analysis_frame(data)
+  if (!"cens" %in% names(data)) data$cens <- NA_integer_
+  data$cens <- suppressWarnings(as.integer(as.character(data$cens)))
+
+  observed <- !is.na(normalized$evid) & normalized$evid == 0 & is.finite(normalized$out)
+  above <- observed & normalized$outeq %in% 1:3 & normalized$out > uloq
+
+  # Pmetrics 3.x standard data use CENS = -1 ("aloq") for above-limit observations.
+  # Right-censored rows carry the censoring boundary in OUT; the unvalidated numeric
+  # value above the assay range is not treated as an exact concentration.
+  data$cens[observed] <- 0L
+  data$cens[above] <- -1L
+  data$out[above] <- uloq
+  data
 }
 
 fit_reviewer_run_101 <- function(overwrite = FALSE) {
@@ -885,17 +1182,38 @@ reviewer_validate_conventional_volume <- function(overwrite = FALSE) {
   )
 }
 
-reviewer_fit <- function(keys = c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed"), overwrite = FALSE) {
-  valid <- c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed")
+fit_reviewer_run_109 <- function(overwrite = FALSE) {
+  data_run_109 <- censor_above_assay_uloq(read_local_analysis_frame("development"))
+  pm_data_run_109 <- PM_data$new(data_run_109)
+  model_run_109 <- make_base_model()
+  message("Fitting reviewer run 109: OUTEQ 1-3 values >100 mg/L right-censored at 100 mg/L; cycles=1000, points = 300, seed=12345")
+  model_run_109$fit(
+    data = pm_data_run_109, cycles = 1000, path = PATHS$runs, run = 109L,
+    points = 300, seed = 12345, overwrite = overwrite, report = "plotly"
+  )
+}
+
+reviewer_validate_uloq_censored <- function(overwrite = FALSE) {
+  if (!reviewer_run_exists(109L)) stop("Reviewer run 109 is missing. Fit it before validation.", call. = FALSE)
+  validation_frame <- censor_above_assay_uloq(read_local_analysis_frame("validation"))
+  validation_data <- PM_data$new(validation_frame)
+  model <- make_base_model()
+  message("Fitting reviewer run 110 held-out validation with the same ULOQ censoring rule and run 109 as the fixed prior.")
+  model$fit(
+    data = validation_data, cycles = 0, path = PATHS$runs, run = 110L, prior = 109L,
+    overwrite = overwrite, report = "plotly"
+  )
+}
+
+reviewer_fit <- function(keys = c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed", "uloq_censored"), overwrite = FALSE) {
+  valid <- c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed", "uloq_censored")
   invalid <- setdiff(keys, valid)
   if (length(invalid)) stop("Unknown reviewer key(s): ", paste(invalid, collapse = ", "), call. = FALSE)
   for (key in keys) {
     if (identical(key, "single_volume")) {
-      fit_reviewer_run_101(overwrite = overwrite)
-      reviewer_validate_single_volume(overwrite = overwrite)
+      fit_reviewer_run_101(overwrite = overwrite); reviewer_validate_single_volume(overwrite = overwrite)
     } else if (identical(key, "conventional_volume")) {
-      fit_reviewer_run_107(overwrite = overwrite)
-      reviewer_validate_conventional_volume(overwrite = overwrite)
+      fit_reviewer_run_107(overwrite = overwrite); reviewer_validate_conventional_volume(overwrite = overwrite)
     } else if (identical(key, "no_hd_only")) {
       fit_reviewer_run_103(overwrite = overwrite)
     } else if (identical(key, "hd_low")) {
@@ -904,6 +1222,8 @@ reviewer_fit <- function(keys = c("single_volume", "conventional_volume", "no_hd
       fit_reviewer_run_105(overwrite = overwrite)
     } else if (identical(key, "elf_top2_removed")) {
       fit_reviewer_run_106(overwrite = overwrite)
+    } else if (identical(key, "uloq_censored")) {
+      fit_reviewer_run_109(overwrite = overwrite); reviewer_validate_uloq_censored(overwrite = overwrite)
     }
   }
   invisible(TRUE)
@@ -1138,6 +1458,11 @@ sensitivity_parameter_table <- function() {
       run = load_reviewer_run(106L),
       label = "Run 106 - Exclude two highest ELF observations"
     )
+    ,
+    list(
+      run = load_reviewer_run(109L),
+      label = "Run 109 - OUTEQ 1-3 >100 mg/L right-censored at ULOQ"
+    )
   )
 
   data <- do.call(
@@ -1205,6 +1530,21 @@ elf_sensitivity_metrics <- function() {
   format_metrics_table(data)
 }
 
+uloq_censoring_metrics <- function() {
+  output <- list(); counter <- 0L
+  entries <- list(
+    list(run = load_public_run(5L), label = "Run 5 - Primary validation"),
+    list(run = load_reviewer_run(110L), label = "Run 110 - ULOQ-censored validation")
+  )
+  for (outeq in 1:3) {
+    for (entry in entries) {
+      counter <- counter + 1L
+      output[[counter]] <- op_metrics(entry$run, entry$label, "Validation", outeq, "post")
+    }
+  }
+  format_metrics_table(do.call(rbind, output))
+}
+
 reviewer_model_sensitivity <- function(write_html = TRUE) {
   required <- REVIEWER_RUN_REGISTRY$reviewer_run
   missing <- required[!vapply(required, reviewer_run_exists, logical(1L))]
@@ -1214,13 +1554,14 @@ reviewer_model_sensitivity <- function(write_html = TRUE) {
     list(title="Held-out predictive comparison: piecewise versus single central volume", intro="Both models are applied to the same validation cohort by MAP without relocating their population support points.", html=data_frame_html(validation_structure_comparison())),
     list(title="Population median sensitivity", intro="AIC should not be compared across the HD-only exclusion or ELF-observation exclusion because those analyses change the fitted data. Parameter shifts are shown instead.", html=data_frame_html(sensitivity_parameter_table())),
     list(title="Audit of the two highest development ELF observations", intro="Values are shown without subject identifiers. Procedural verification must be performed against laboratory and collection records.", html=data_frame_html(elf_outlier_table())),
-    list(title="ELF fit before and after exclusion", intro="This quantifies whether the two highest observations dominate the development ELF regression.", html=data_frame_html(elf_sensitivity_metrics()))
+    list(title="ELF fit before and after exclusion", intro="This quantifies whether the two highest observations dominate the development ELF regression.", html=data_frame_html(elf_sensitivity_metrics())),
+    list(title="ULOQ right-censoring sensitivity", intro="OUTEQ 1-3 observations above 100 mg/L are encoded as Pmetrics above-limit observations (CENS=-1/ALOQ) with OUT set to the 100 mg/L censoring boundary. Run 109 refits development and run 110 applies that prior to held-out validation using the same rule.", html=data_frame_html(uloq_censoring_metrics()))
   )
   if (write_html) {
     write_reviewer_html(
       REVIEWER_PATHS$sensitivity_html,
       "Reviewer-response model sensitivity analyses",
-      "Structural, HD-only, fixed-HD-clearance, and ELF high-observation analyses.",
+      "Structural, HD-only, fixed-HD-clearance, ELF high-observation, and assay-ULOQ censoring analyses.",
       sections,
       notes=c(
         paste0("The HD-clearance sensitivity values ", REVIEWER_HD_LOW, " and ", REVIEWER_HD_HIGH, " L/h are transparent +/-50% brackets around the manuscript value of ", REVIEWER_HD_REFERENCE, " L/h; they are not claimed as empirical confidence limits."),
@@ -1248,7 +1589,7 @@ write_reviewer_index <- function() {
   html <- paste0(
     "<!doctype html><html><head><meta charset=\"utf-8\"><title>Reviewer response analyses</title>",
     "<style>body{font-family:Arial,Helvetica,sans-serif;max-width:850px;margin:3rem auto;padding:0 1rem;line-height:1.5}li{margin:.7rem 0}</style></head><body>",
-    "<h1>Reviewer-response analyses</h1><p>The primary manuscript path remains public runs 1-5. Reviewer-only sensitivity runs are 101-108.</p><ul>", rows, "</ul></body></html>"
+    "<h1>Reviewer-response analyses</h1><p>The primary manuscript path remains public runs 1-5. Reviewer-only sensitivity runs are 101-110.</p><ul>", rows, "</ul></body></html>"
   )
   writeLines(html, REVIEWER_PATHS$index_html, useBytes=TRUE)
   message("Wrote ", REVIEWER_PATHS$index_html)
@@ -1272,7 +1613,7 @@ reviewer_usage <- function() {
     "  Rscript Pmetrics/Rscript/Analysis.R reviewer fit [key] [--overwrite]\n",
     "  Rscript Pmetrics/Rscript/Analysis.R reviewer report\n",
     "  Rscript Pmetrics/Rscript/Analysis.R reviewer all [--overwrite]\n\n",
-    "Keys: single_volume, conventional_volume, no_hd_only, hd_low, hd_high, elf_top2_removed\n",
+    "Keys: single_volume, conventional_volume, no_hd_only, hd_low, hd_high, elf_top2_removed, uloq_censored\n",
     sep=""
   )
 }
@@ -1293,7 +1634,7 @@ reviewer_main <- function(arguments) {
     write_reviewer_index()
   } else if (action == "fit") {
     run_check(TRUE, TRUE, FALSE)
-    keys <- if (length(positional)) positional else c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed")
+    keys <- if (length(positional)) positional else c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed", "uloq_censored")
     reviewer_fit(keys, overwrite)
   } else if (action == "report") {
     run_check(TRUE, TRUE, TRUE)
@@ -1302,7 +1643,7 @@ reviewer_main <- function(arguments) {
     run_check(TRUE, TRUE, TRUE)
     reviewer_comment_map(TRUE)
     reviewer_data_audit(TRUE)
-    reviewer_fit(c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed"), overwrite)
+    reviewer_fit(c("single_volume", "conventional_volume", "no_hd_only", "hd_low", "hd_high", "elf_top2_removed", "uloq_censored"), overwrite)
     reviewer_model_sensitivity(TRUE)
     reviewer_diagnostics(TRUE)
     write_reviewer_index()
@@ -1312,3 +1653,5 @@ reviewer_main <- function(arguments) {
   }
   invisible(TRUE)
 }
+
+# ---- sampling-density grouping -----------------------------------------------

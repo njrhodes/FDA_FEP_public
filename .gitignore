@@ -1,7 +1,6 @@
 # =============================================================================
 # FDA-FEP public repository
-# Track only analysis code, documentation, public simulation templates,
-# and selected HTML artifacts.
+# Source-controlled code/configuration only; generated analysis artifacts stay local.
 # =============================================================================
 
 # R / RStudio
@@ -27,24 +26,23 @@ Thumbs.db
 *.temp
 *.orig
 *.rej
-Analysis.R.bak
 
-# Private preprocessing and authorized source material
+# Local data and preprocessing
 Pmetrics/private/
 Pmetrics/src/
 
-# Model run contents are local except HTML reports
-Pmetrics/Runs/**
-!Pmetrics/Runs/
-!Pmetrics/Runs/**/*.html
+# Pmetrics run directories and all generated reports/artifacts
+Pmetrics/Runs/
+*.html
+*.htm
 
-# Public simulation templates are intentionally tracked
+# Keep only the public simulation templates from Pmetrics/Sim
 Pmetrics/Sim/*
 !Pmetrics/Sim/sim5.csv
 !Pmetrics/Sim/sim6.csv
 !Pmetrics/Sim/sim7.csv
 
-# Generated non-HTML outputs
+# Generated analysis outputs
 *.RData
 *.Rdata
 *.rds
@@ -69,6 +67,3 @@ Pmetrics/Sim/*
 *.tar
 *.tar.gz
 *.7z
-
-# Generated reviewer-response reports
-Pmetrics/Runs/reviewer-*.html
