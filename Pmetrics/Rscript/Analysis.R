@@ -1594,9 +1594,10 @@ simulate_pta <- function(write_html = TRUE) {
 # ---- public repository audit -------------------------------------------------
 allowed_tracked_file <- function(path) {
   path <- gsub("\\\\", "/", path)
-  path %in% c(".gitignore", "README.md", "FDA_FEP_public.Rproj") |
+  path %in% c(".gitignore", "README.md", "FDA_FEP_public.Rproj", "CLAUDE.md") |
     grepl("^Pmetrics/Rscript/[^/]+\\.R$", path) |
-    grepl("^Pmetrics/Sim/sim[567]\\.csv$", path)
+    grepl("^Pmetrics/Sim/sim[567]\\.csv$", path) |
+    grepl("^docs/[^/]+\\.md$", path)
 }
 
 audit_git_tracking <- function() {
