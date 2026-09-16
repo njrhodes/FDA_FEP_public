@@ -70,3 +70,7 @@ Pmetrics/Sim/*
 
 # Claude Code session files
 .claude/
+
+CLAUDE.md
+docs/CURRENT_SLICE.md
+docs/PM_PTA_309_AUDIT.md
