@@ -182,7 +182,7 @@ ANALYSIS_COLUMNS <- c(
   "ecmo", "hd", "crrt", "cvvh", "cvvhd", "cvvhdf", "flow", "bfr", "bag_reset"
 )
 
-# Adrian's validated sim5/sim6/sim7 files do not contain INPUT because they use
+# sim5/sim6/sim7 do not contain INPUT because they use
 # the default dose input. Every other model column remains explicit.
 SIMULATION_COLUMNS <- setdiff(ANALYSIS_COLUMNS, "input")
 
@@ -756,7 +756,7 @@ load_analysis_data <- function(which = c("development", "validation")) {
 fit_public_run_1 <- function(overwrite = FALSE) {
   data_run_1 <- load_analysis_data("development")
   model_run_1 <- make_base_model()
-  message("Fitting public run 1 (base; legacy run 38); cycles=1000, points=300, seed=12345")
+  message("Fitting public run 1 (base); cycles=1000, points=300, seed=12345")
   model_run_1$fit(
     data = data_run_1,
     cycles = 1000,
@@ -772,7 +772,7 @@ fit_public_run_1 <- function(overwrite = FALSE) {
 fit_public_run_2 <- function(overwrite = FALSE) {
   data_run_2 <- load_analysis_data("development")
   model_run_2 <- make_weight_clearance_model()
-  message("Fitting public run 2 (weight_clearance; legacy run 48); cycles=1000, points=300, seed=12345")
+  message("Fitting public run 2 (weight_clearance); cycles=1000, points=300, seed=12345")
   model_run_2$fit(
     data = data_run_2,
     cycles = 1000,
@@ -788,7 +788,7 @@ fit_public_run_2 <- function(overwrite = FALSE) {
 fit_public_run_3 <- function(overwrite = FALSE) {
   data_run_3 <- load_analysis_data("development")
   model_run_3 <- make_weight_voff_model()
-  message("Fitting public run 3 (weight_voff; legacy run 46); cycles=1000, points=300, seed=12345")
+  message("Fitting public run 3 (weight_voff); cycles=1000, points=300, seed=12345")
   model_run_3$fit(
     data = data_run_3,
     cycles = 1000,
@@ -804,7 +804,7 @@ fit_public_run_3 <- function(overwrite = FALSE) {
 fit_public_run_4 <- function(overwrite = FALSE) {
   data_run_4 <- load_analysis_data("development")
   model_run_4 <- make_crcl_clearance_model()
-  message("Fitting public run 4 (crcl_clearance; legacy run 36); cycles=1000, points=300, seed=12345")
+  message("Fitting public run 4 (crcl_clearance); cycles=1000, points=300, seed=12345")
   model_run_4$fit(
     data = data_run_4,
     cycles = 1000,
@@ -1399,8 +1399,8 @@ parameter_summary <- function(write_html = TRUE) {
 
 
 # ---- simulation inputs -------------------------------------------------------
-# sim5/sim6/sim7 are the validated public regimen templates from Adrian's
-# analysis. They are read directly from Pmetrics/Sim and are not regenerated.
+# sim5/sim6/sim7 are the validated public regimen templates.
+# They are read directly from Pmetrics/Sim and are not regenerated.
 load_simulation_templates <- function() {
   inputs <- get_analysis_inputs()
   paths <- inputs$simulation
@@ -1594,10 +1594,18 @@ simulate_pta <- function(write_html = TRUE) {
 # ---- public repository audit -------------------------------------------------
 allowed_tracked_file <- function(path) {
   path <- gsub("\\\\", "/", path)
-  path %in% c(".gitignore", "README.md", "FDA_FEP_public.Rproj", "CLAUDE.md") |
-    grepl("^Pmetrics/Rscript/[^/]+\\.R$", path) |
-    grepl("^Pmetrics/Sim/sim[567]\\.csv$", path) |
-    grepl("^docs/[^/]+\\.md$", path)
+  path %in% c(
+    ".gitignore",
+    "README.md",
+    "FDA_FEP_public.Rproj",
+    "Pmetrics/Rscript/Analysis.R",
+    "Pmetrics/Rscript/Figure.R",
+    "Pmetrics/Rscript/Tables.R",
+    "Pmetrics/Rscript/Reviewer_Analyses.R",
+    "Pmetrics/Sim/sim5.csv",
+    "Pmetrics/Sim/sim6.csv",
+    "Pmetrics/Sim/sim7.csv"
+  )
 }
 
 audit_git_tracking <- function() {
@@ -1669,7 +1677,7 @@ run_check <- function(
     message("Simulation EI: ", inputs$simulation[["EI"]])
     message("Simulation II: ", inputs$simulation[["II"]])
   }
-  message("Manuscript source runs: 38, 48, 46, 36 development; 39 validation. Reproducibility reruns: public 1-5.")
+  message("Public runs 1-5 are deterministic reproducibility reruns of the development and validation models.")
   message("Check passed.")
   invisible(TRUE)
 }

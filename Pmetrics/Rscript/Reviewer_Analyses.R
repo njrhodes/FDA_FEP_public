@@ -604,17 +604,6 @@ source_cohort_table <- function(dev, val) {
 }
 
 
-sampling_group <- function(id) {
-  rich_ids <- c(2058, 2060, 2076, 2103, 2126, 9, 15, 20)
-
-  ifelse(
-    id %in% rich_ids,
-    "Prospective (Richly Sampled)",
-    "Sparse / Opportunistic"
-  )
-}
-
-
 observation_period_by_sampling_table <- function(dev, val) {
   build <- function(data, dataset_label) {
     data <- normalize_analysis_frame(data)
@@ -641,7 +630,7 @@ observation_period_by_sampling_table <- function(dev, val) {
 
         data.frame(
           id = rows$id[[1L]],
-          `Sampling group` = sampling_group(rows$id[[1L]]),
+          `Sampling group` = if ("sampling_group" %in% names(rows)) rows$sampling_group[[1L]] else NA_character_,
           `Observed follow-up, h` = span,
           `Dose records` = doses,
           `PK observations` = nrow(obs),
@@ -695,7 +684,15 @@ crrt_exposure_by_sampling_table <- function(dev, val) {
       ,
       drop = FALSE
     ]
-    duration[["Sampling group"]] <- sampling_group(duration$id)
+    id_to_group <- if ("sampling_group" %in% names(data)) {
+      tapply(data$sampling_group, data$id, function(x) x[!is.na(x)][1L])
+    } else {
+      stats::setNames(
+        rep(NA_character_, length(unique(data$id))),
+        as.character(unique(data$id))
+      )
+    }
+    duration[["Sampling group"]] <- unname(id_to_group[as.character(duration$id)])
 
     unique_state <- unique(
       data[
@@ -716,7 +713,7 @@ crrt_exposure_by_sampling_table <- function(dev, val) {
       drop = FALSE
     ]
 
-    active[["Sampling group"]] <- sampling_group(active$id)
+    active[["Sampling group"]] <- unname(id_to_group[as.character(active$id)])
     active$intensity <- active$flow / active$wt
 
     groups <- unique(c(

@@ -12,6 +12,8 @@ FDA_FEP_public/
 ├── Pmetrics/
 │   ├── Rscript/
 │   │   ├── Analysis.R
+│   │   ├── Figure.R
+│   │   ├── Tables.R
 │   │   └── Reviewer_Analyses.R
 │   └── Sim/
 │       ├── sim5.csv
@@ -22,6 +24,8 @@ FDA_FEP_public/
 ```
 
 The repository is intentionally source-focused. Generated Pmetrics run folders, HTML reports, figures, tables, rendered documents, model-ready clinical data, and local preprocessing materials are not tracked.
+
+`Figure.R` and `Tables.R` reproduce all manuscript figures and tables from local run outputs and require `flextable`, `officer`, `ggplot2`, `patchwork`, `scales`, `viridisLite`, `DiagrammeR`, and `DiagrammeRsvg`. Both scripts source `Analysis.R` and must be run from the repository root.
 
 ## Runtime
 
@@ -112,6 +116,10 @@ Reviewer-only runs are:
 | 110 | Held-out MAP validation using run 109 as prior with the same right-censoring rule |
 
 Runs 109-110 address uncertainty above the stated assay range without asserting dilution integrity. Reviewer-only runs are sensitivity analyses and do not replace or alter the primary run sequence.
+
+## Private preprocessing interface
+
+`Tables.R` (`make_table_s1`) and `Reviewer_Analyses.R` (`observation_period_by_sampling_table`) consume a `sampling_group` column from the source data CSVs. Private preprocessing must supply this column in both `development.csv` and `validation.csv` before running those tables or reviewer analyses. The column should carry a human-readable category label (e.g., `"Prospective sampling"` / `"Opportunistic sampling"`). Subject-to-cohort mapping is never stored in the public scripts.
 
 ## Repository policy
 
